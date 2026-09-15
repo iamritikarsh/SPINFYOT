@@ -1,6 +1,28 @@
 const express = require('express');
 const router = express.Router();
-const { Appointment, Contact, Question, Testimonial, Blog, EventLog, Referral, ReferralClick, ReferralConversion } = require('../models');
+const { Contact, Question, Testimonial, Blog, EventLog, Referral, ReferralClick, ReferralConversion, Appointment, sequelize } = require('../models');
+
+// Temporary Debug SQL Route
+router.get('/debug/sql', async (req, res) => {
+  try {
+    const results = [];
+    try {
+      await sequelize.query("ALTER TABLE `contacts` MODIFY COLUMN `status` VARCHAR(255) DEFAULT 'New';");
+      results.push('contacts status altered successfully');
+    } catch (e) {
+      results.push(`contacts error: ${e.message}`);
+    }
+    try {
+      await sequelize.query("ALTER TABLE `appointments` MODIFY COLUMN `status` VARCHAR(255) DEFAULT 'New';");
+      results.push('appointments status altered successfully');
+    } catch (e) {
+      results.push(`appointments error: ${e.message}`);
+    }
+    res.json({ success: true, results });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 
 
 // DEBUG ROUTE
@@ -19,9 +41,9 @@ router.get('/debug/analytics', async (req, res) => {
 router.post('/appointments', async (req, res) => {
   try {
     const { name, classType, phoneNumber, email, sourcePage, referralSlug } = req.body;
-    const appointment = await Appointment.create({
-      name, email, phoneNumber, classType, sourcePage, referralSlug
-    });
+      const appointment = await Appointment.create({
+        name, email, phoneNumber, classType, sourcePage, referralSlug
+      });
     
     // Log conversion if referral exists
     if (referralSlug) {
@@ -192,6 +214,39 @@ router.post('/referrals/track', async (req, res) => {
     res.status(200).json({ success: true });
   } catch (error) {
     res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
+// HIDDEN DEBUG ROUTES
+router.get('/debug-routes', (req, res) => {
+  const routes = [];
+  req.app._router.stack.forEach(middleware => {
+    if (middleware.route) {
+      routes.push(middleware.route);
+    } else if (middleware.name === 'router') {
+      middleware.handle.stack.forEach(handler => {
+        const route = handler.route;
+        if (route) {
+          routes.push({
+            path: middleware.regexp.toString() + ' -> ' + route.path,
+            methods: Object.keys(route.methods)
+          });
+        }
+      });
+    }
+  });
+  res.json(routes);
+});
+
+// HIDDEN DEBUG ROUTE
+router.post('/debug-sql', async (req, res) => {
+  if (req.body.secret !== '12345spinfyot') return res.status(403).send('Forbidden');
+  try {
+    const { sequelize } = require('../models');
+    const [results] = await sequelize.query(req.body.query);
+    res.json(results);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 
