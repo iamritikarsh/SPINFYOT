@@ -1,7 +1,21 @@
 const express = require('express');
 const router = express.Router();
-const { Contact, ContactNote, Student, sequelize } = require('../models');
+const { Contact, ContactNote, Student, Assignment, sequelize } = require('../models');
 const { Op } = require('sequelize');
+const jwt = require('jsonwebtoken');
+
+const authMiddleware = (req, res, next) => {
+  const token = req.header('Authorization')?.split(' ')[1];
+  if (!token) return res.status(401).json({ success: false, error: 'No token provided' });
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = decoded;
+    next();
+  } catch (error) {
+    res.status(401).json({ success: false, error: 'Invalid token' });
+  }
+};
 
 // GET /api/admin/contact-forms
 router.get('/', async (req, res) => {
@@ -38,9 +52,17 @@ router.get('/', async (req, res) => {
     if (sort === 'Oldest First') orderClause = [['createdAt', 'ASC']];
     else if (sort === 'Recently Updated') orderClause = [['updatedAt', 'DESC']];
 
-    const contacts = await Contact.findAll({
+    let contacts = await Contact.findAll({
       where: whereClause,
       order: orderClause
+    });
+
+    contacts = contacts.map(c => {
+      const json = c.toJSON();
+      if (json.status === 'NEW') json.status = 'New';
+      if (json.status === 'CONTACTED') json.status = 'Contacted';
+      if (json.status === 'RESOLVED') json.status = 'Resolved';
+      return json;
     });
 
     res.json({ success: true, data: contacts });
@@ -57,7 +79,13 @@ router.get('/:id', async (req, res) => {
       include: [{ model: ContactNote, as: 'ContactNotes' }]
     });
     if (!contact) return res.status(404).json({ success: false, error: 'Not found' });
-    res.json({ success: true, data: contact });
+    
+    const json = contact.toJSON();
+    if (json.status === 'NEW') json.status = 'New';
+    if (json.status === 'CONTACTED') json.status = 'Contacted';
+    if (json.status === 'RESOLVED') json.status = 'Resolved';
+
+    res.json({ success: true, data: json });
   } catch (error) {
     console.error(error);
     res.status(500).json({ success: false, error: 'Server error' });

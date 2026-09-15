@@ -4,7 +4,7 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
 const multer = require('multer');
 const path = require('path');
-const { Admin, Appointment, Contact, Question, Testimonial, Blog, EventLog, Referral, ReferralClick, ReferralConversion, Assignment, Counsellor, Student, sequelize } = require('../models');
+const { Admin, Appointment, Contact, ContactNote, Question, Testimonial, Blog, EventLog, Referral, ReferralClick, ReferralConversion, Assignment, Counsellor, Student, sequelize } = require('../models');
 const { Op } = require('sequelize');
 
 // Configure multer for file uploads
@@ -138,27 +138,40 @@ router.get('/appointments', authMiddleware, async (req, res) => {
     const rawAppointments = await Appointment.findAll();
     const rawContacts = await Contact.findAll();
 
-    const normalizedAppointments = rawAppointments.map(app => ({
-      ...app.toJSON(),
-      _recordType: 'appointment'
-    }));
+    const normalizedAppointments = rawAppointments.map(app => {
+      const json = app.toJSON();
+      if (json.status === 'NEW') json.status = 'New';
+      if (json.status === 'CONTACTED') json.status = 'Contacted';
+      if (json.status === 'RESOLVED') json.status = 'Resolved';
+      return {
+        ...json,
+        _recordType: 'appointment'
+      };
+    });
 
-    const normalizedContacts = rawContacts.map(contact => ({
-      id: contact.id,
-      name: contact.name,
-      email: contact.email,
-      phoneNumber: contact.phone,
-      classType: null,
-      sourcePage: 'Contact Us',
-      referralSlug: contact.referralSlug,
-      counsellorId: contact.counsellorId,
-      status: contact.status,
-      interest: contact.interest,
-      message: contact.message,
-      createdAt: contact.createdAt,
-      updatedAt: contact.updatedAt,
-      _recordType: 'contact'
-    }));
+    const normalizedContacts = rawContacts.map(contact => {
+      let status = contact.status;
+      if (status === 'NEW') status = 'New';
+      if (status === 'CONTACTED') status = 'Contacted';
+      if (status === 'RESOLVED') status = 'Resolved';
+      
+      return {
+        id: contact.id,
+        name: contact.name,
+        email: contact.email,
+        phoneNumber: contact.phone,
+        classType: null,
+        sourcePage: 'Contact Us',
+        referralSlug: contact.referralSlug,
+        counsellorId: contact.counsellorId,
+        status: status,
+        interest: contact.interest,
+        message: contact.message,
+        createdAt: contact.createdAt,
+        updatedAt: contact.updatedAt,
+        _recordType: 'contact'
+      };
+    });
 
     const data = [...normalizedAppointments, ...normalizedContacts].sort((a, b) => {
       return new Date(b.createdAt) - new Date(a.createdAt);
@@ -174,17 +187,46 @@ router.get('/appointments', authMiddleware, async (req, res) => {
 // PUT /api/admin/appointments/:id/status
 router.put('/appointments/:id/status', authMiddleware, async (req, res) => {
   try {
-    await Appointment.update({ status: req.body.status }, { where: { id: req.params.id } });
+    let newStatus = req.body.status;
+    if (newStatus === 'New') newStatus = 'NEW';
+    if (newStatus === 'Contacted') newStatus = 'CONTACTED';
+    if (newStatus === 'Resolved') newStatus = 'RESOLVED';
+    await Appointment.update({ status: newStatus }, { where: { id: req.params.id } });
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ success: false, error: 'Server error' });
   }
 });
 
+// DELETE /api/admin/contacts/:id
+router.delete('/contacts/:id', authMiddleware, async (req, res) => {
+  try {
+    const contact = await Contact.findByPk(req.params.id);
+    if (!contact) return res.status(404).json({ success: false, error: 'Contact not found' });
+    
+    // Manually cascade delete associated contact notes and assignments
+    await ContactNote.destroy({ where: { contactId: req.params.id } });
+    await Assignment.destroy({ where: { appointmentId: req.params.id, recordType: 'contact' } }).catch(() => {});
+    
+    await contact.destroy();
+    res.json({ success: true, message: 'Contact deleted successfully' });
+  } catch (error) {
+    console.error('DELETE CONTACT ERROR:', error);
+    res.status(500).json({ success: false, error: 'Failed to delete contact. ' + error.message });
+  }
+});
+
 // GET /api/admin/contacts
 router.get('/contacts', authMiddleware, async (req, res) => {
   try {
-    const data = await Contact.findAll({ order: [['createdAt', 'DESC']] });
+    const rawData = await Contact.findAll({ order: [['createdAt', 'DESC']] });
+    const data = rawData.map(c => {
+      const json = c.toJSON();
+      if (json.status === 'NEW') json.status = 'New';
+      if (json.status === 'CONTACTED') json.status = 'Contacted';
+      if (json.status === 'RESOLVED') json.status = 'Resolved';
+      return json;
+    });
     res.json({ success: true, data });
   } catch (error) {
     res.status(500).json({ success: false, error: 'Server error' });
@@ -194,7 +236,12 @@ router.get('/contacts', authMiddleware, async (req, res) => {
 // PUT /api/admin/contacts/:id/status
 router.put('/contacts/:id/status', authMiddleware, async (req, res) => {
   try {
-    await Contact.update({ status: req.body.status }, { where: { id: req.params.id } });
+    let newStatus = req.body.status;
+    if (newStatus === 'New') newStatus = 'NEW';
+    if (newStatus === 'Contacted') newStatus = 'CONTACTED';
+    if (newStatus === 'Resolved') newStatus = 'RESOLVED';
+    
+    await Contact.update({ status: newStatus }, { where: { id: req.params.id } });
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ success: false, error: 'Server error' });
@@ -643,6 +690,43 @@ router.delete('/referrals/:id', authMiddleware, async (req, res) => {
     res.status(200).json({ success: true });
   } catch (error) {
     res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
+// PUT /api/admin/appointments/:id/status
+router.put('/appointments/:id/status', authMiddleware, async (req, res) => {
+  try {
+    const appointment = await Appointment.findByPk(req.params.id);
+    if (!appointment) return res.status(404).json({ success: false, error: 'Appointment not found' });
+    
+    let newStatus = req.body.status;
+    if (newStatus === 'New') newStatus = 'NEW';
+    if (newStatus === 'Contacted') newStatus = 'CONTACTED';
+    if (newStatus === 'Resolved') newStatus = 'RESOLVED';
+    
+    appointment.status = newStatus;
+    await appointment.save();
+    res.json({ success: true, data: appointment });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, error: 'Server Error' });
+  }
+});
+
+// DELETE /api/admin/appointments/:id
+router.delete('/appointments/:id', authMiddleware, async (req, res) => {
+  try {
+    const appointment = await Appointment.findByPk(req.params.id);
+    if (!appointment) return res.status(404).json({ success: false, error: 'Appointment not found' });
+    
+    // Manually cascade delete associated assignments
+    await Assignment.destroy({ where: { appointmentId: req.params.id } });
+    
+    await appointment.destroy();
+    res.json({ success: true, message: 'Appointment deleted successfully' });
+  } catch (error) {
+    console.error('DELETE APPOINTMENT ERROR:', error);
+    res.status(500).json({ success: false, error: 'Failed to delete appointment. ' + error.message });
   }
 });
 
