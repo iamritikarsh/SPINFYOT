@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import api from '../utils/api';
 import { useAuth } from '../App';
-import { Download, Search, FileText, FileSpreadsheet } from 'lucide-react';
+import { Download, Search, FileText, FileSpreadsheet, Trash2, Check } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -10,7 +10,42 @@ export default function Appointments() {
   const [appointments, setAppointments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+  const [deleteModal, setDeleteModal] = useState({ show: false, step: 1, id: null, recordType: null, loading: false, error: null, success: false });
   const { token } = useAuth();
+
+  const initiateDelete = (id, recordType) => {
+    setDeleteModal({ show: true, step: 1, id, recordType, loading: false, error: null, success: false });
+  };
+
+  const cancelDelete = () => {
+    setDeleteModal({ show: false, step: 1, id: null, recordType: null, loading: false, error: null, success: false });
+  };
+
+  const confirmDeleteStep1 = () => {
+    setDeleteModal(prev => ({ ...prev, step: 2, error: null }));
+  };
+
+  const confirmDeleteStep2 = async () => {
+    setDeleteModal(prev => ({ ...prev, loading: true, error: null }));
+    try {
+      const endpoint = deleteModal.recordType === 'contact' 
+        ? `/api/admin/contacts/${deleteModal.id}` 
+        : `/api/admin/appointments/${deleteModal.id}`;
+      const res = await api.delete(endpoint, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.data.success) {
+        setAppointments(appointments.filter(app => !(app.id === deleteModal.id && app._recordType === deleteModal.recordType)));
+        setDeleteModal(prev => ({ ...prev, loading: false, success: true }));
+        setTimeout(() => cancelDelete(), 1500);
+      } else {
+        setDeleteModal(prev => ({ ...prev, loading: false, error: res.data.error || "Unable to delete entry. Please try again." }));
+      }
+    } catch (error) {
+      console.error(error);
+      setDeleteModal(prev => ({ ...prev, loading: false, error: error.response?.data?.error || "Unable to delete entry. Please try again." }));
+    }
+  };
 
   useEffect(() => {
     fetchAppointments();
@@ -72,10 +107,10 @@ export default function Appointments() {
   );
 
   return (
-    <div className="p-8">
-      <div className="flex justify-between items-center mb-6">
+    <div className="p-4 md:p-8 w-full max-w-full box-border">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
         <h1 className="text-2xl font-bold text-slate-800">Booked Appointments</h1>
-        <div className="flex gap-3">
+        <div className="flex flex-wrap gap-3">
           <button onClick={() => handleExport('excel')} className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition">
             <FileSpreadsheet size={18} /> Export Excel
           </button>
@@ -85,53 +120,56 @@ export default function Appointments() {
         </div>
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden w-full">
         <div className="p-4 border-b border-slate-200 flex justify-between items-center bg-slate-50">
-          <div className="relative">
+          <div className="relative w-full sm:w-auto">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
             <input 
               type="text" 
               placeholder="Search by name or email..." 
               value={searchTerm}
               onChange={e => setSearchTerm(e.target.value)}
-              className="pl-10 pr-4 py-2 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 w-64 text-sm"
+              className="pl-10 pr-4 py-2 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 w-full sm:w-64 text-sm"
             />
           </div>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
+        <div className="overflow-x-auto w-full">
+          <table className="w-full text-left border-collapse min-w-[900px]">
             <thead>
               <tr className="bg-slate-50 text-slate-500 text-sm border-b border-slate-200">
-                <th className="p-4 font-semibold">Name</th>
-                <th className="p-4 font-semibold">Contact Info</th>
-                <th className="p-4 font-semibold">Level / Interest</th>
-                <th className="p-4 font-semibold max-w-xs">Message</th>
-                <th className="p-4 font-semibold">Source Page</th>
-                <th className="p-4 font-semibold">Date Submitted</th>
-                <th className="p-4 font-semibold">Status</th>
+                <th className="p-4 font-semibold whitespace-nowrap">Name</th>
+                <th className="p-4 font-semibold whitespace-nowrap">Contact Info</th>
+                <th className="p-4 font-semibold min-w-[150px]">Level / Interest</th>
+                <th className="p-4 font-semibold min-w-[200px]">Message</th>
+                <th className="p-4 font-semibold whitespace-nowrap">Source Page</th>
+                <th className="p-4 font-semibold whitespace-nowrap">Date Submitted</th>
+                <th className="p-4 font-semibold whitespace-nowrap">Status</th>
+                <th className="p-4 font-semibold whitespace-nowrap text-center">Action</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan="7" className="p-8 text-center text-slate-500">Loading...</td></tr>
+                <tr><td colSpan="8" className="p-8 text-center text-slate-500">Loading...</td></tr>
               ) : filtered.length === 0 ? (
-                <tr><td colSpan="7" className="p-8 text-center text-slate-500">No appointments found.</td></tr>
+                <tr><td colSpan="8" className="p-8 text-center text-slate-500">No appointments found.</td></tr>
               ) : (
                 filtered.map(app => (
                   <tr key={app.id} className="border-b border-slate-100 hover:bg-slate-50/50">
-                    <td className="p-4 font-medium text-slate-800">{app.name}</td>
-                    <td className="p-4 text-sm">
-                      <div className="text-slate-800">{app.email}</div>
+                    <td className="p-4 font-medium text-slate-800 break-words">{app.name}</td>
+                    <td className="p-4 text-sm break-words">
+                      <div className="text-slate-800 break-all">{app.email}</div>
                       <div className="text-slate-500">{app.phoneNumber}</div>
                     </td>
-                    <td className="p-4 text-sm text-slate-600">{app.classType || app.interest || '-'}</td>
-                    <td className="p-4 text-sm text-slate-600 max-w-xs truncate" title={app.message}>{app.message || '-'}</td>
-                    <td className="p-4 text-sm text-slate-500"><span className="bg-slate-100 px-2 py-1 rounded text-xs font-mono">{app.sourcePage}</span></td>
-                    <td className="p-4 text-sm text-slate-600">{new Date(app.createdAt).toLocaleDateString()}</td>
-                    <td className="p-4">
+                    <td className="p-4 text-sm text-slate-600 break-words whitespace-pre-wrap">{app.classType || app.interest || '-'}</td>
+                    <td className="p-4 text-sm text-slate-600">
+                      <div className="max-h-24 overflow-y-auto whitespace-pre-wrap break-words">{app.message || '-'}</div>
+                    </td>
+                    <td className="p-4 text-sm text-slate-500"><span className="bg-slate-100 px-2 py-1 rounded text-xs font-mono whitespace-nowrap">{app.sourcePage}</span></td>
+                    <td className="p-4 text-sm text-slate-600 whitespace-nowrap">{new Date(app.createdAt).toLocaleDateString()}</td>
+                    <td className="p-4 whitespace-nowrap">
                       <select
-                        className="text-sm bg-white border border-slate-200 rounded-lg px-3 py-1 focus:outline-none"
+                        className="text-sm bg-white border border-slate-200 rounded-lg px-3 py-1 focus:outline-none min-w-[110px]"
                         value={app.status}
                         onChange={(e) => updateStatus(app.id, e.target.value, app._recordType || 'appointment')}
                       >
@@ -140,6 +178,11 @@ export default function Appointments() {
                         <option value="Resolved">Resolved</option>
                       </select>
                     </td>
+                    <td className="p-4 whitespace-nowrap text-center">
+                      <button onClick={(e) => { e.stopPropagation(); initiateDelete(app.id, app._recordType || 'appointment'); }} className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition" title="Delete">
+                        <Trash2 size={18} />
+                      </button>
+                    </td>
                   </tr>
                 ))
               )}
@@ -147,6 +190,46 @@ export default function Appointments() {
           </table>
         </div>
       </div>
+
+      {deleteModal.show && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm px-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 animate-in fade-in zoom-in duration-200">
+            {deleteModal.success ? (
+              <div className="text-center py-6">
+                <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <Check className="text-green-600" size={32} />
+                </div>
+                <h3 className="text-xl font-bold text-slate-800 mb-2">Entry deleted successfully</h3>
+              </div>
+            ) : deleteModal.step === 1 ? (
+              <>
+                <h3 className="text-xl font-bold text-slate-800 mb-2">Delete Entry</h3>
+                <p className="text-slate-600 mb-6">Are you sure you want to delete this entry?</p>
+                <div className="flex justify-end gap-3">
+                  <button onClick={cancelDelete} className="px-4 py-2 text-slate-600 font-medium hover:bg-slate-100 rounded-lg transition">Cancel</button>
+                  <button onClick={confirmDeleteStep1} className="px-4 py-2 bg-red-600 text-white font-medium hover:bg-red-700 rounded-lg transition">Continue / Yes</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <h3 className="text-xl font-bold text-red-600 mb-2">Permanent Deletion</h3>
+                <p className="text-slate-600 mb-4">Are you absolutely sure? This action will permanently delete this entry.</p>
+                {deleteModal.error && (
+                  <div className="p-3 mb-4 text-sm text-red-700 bg-red-50 rounded-lg border border-red-100 break-words">
+                    {deleteModal.error}
+                  </div>
+                )}
+                <div className="flex justify-end gap-3">
+                  <button onClick={cancelDelete} disabled={deleteModal.loading} className="px-4 py-2 text-slate-600 font-medium hover:bg-slate-100 rounded-lg transition disabled:opacity-50">Cancel</button>
+                  <button onClick={confirmDeleteStep2} disabled={deleteModal.loading} className="px-4 py-2 bg-red-600 text-white font-medium hover:bg-red-700 rounded-lg transition disabled:opacity-50 min-w-[160px] flex justify-center">
+                    {deleteModal.loading ? 'Deleting...' : 'Yes, Delete Permanently'}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
